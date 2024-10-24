@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -12,11 +13,17 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"imersaofc/pkg/rabbitmq"
+
+	"github.com/streadway/amqp"
 )
 
 // VideoConverter handles video conversion tasks
 type VideoConverter struct {
-	db *sql.DB
+	rabbitClient *rabbitmq.RabbitClient
+	db           *sql.DB
+	rootPath     string
 }
 
 // VideoTask represents a video conversion task
@@ -26,24 +33,28 @@ type VideoTask struct {
 }
 
 // NewVideoConverter creates a new instance of VideoConverter
-func NewVideoConverter(db *sql.DB) *VideoConverter {
+func NewVideoConverter(rabbitClient *rabbitmq.RabbitClient, db *sql.DB, rootPath string) *VideoConverter {
 	return &VideoConverter{
-		db: db,
+		rabbitClient: rabbitClient,
+		db:           db,
+		rootPath:     rootPath,
 	}
 }
 
 // HandleMessage processes a video conversion message
-func (vc *VideoConverter) HandleMessage(msg []byte) {
+func (vc *VideoConverter) HandleMessage(ctx context.Context, d amqp.Delivery, conversionExch, confirmationKey, confirmationQueue string) {
 	var task VideoTask
 
-	if err := json.Unmarshal(msg, &task); err != nil {
+	if err := json.Unmarshal(d.Body, &task); err != nil {
 		vc.logError(task, "Failed to deserialize message", err)
+		d.Ack(false)
 		return
 	}
 
 	// Check if the video has already been processed
 	if IsProcessed(vc.db, task.VideoID) {
 		slog.Warn("Video already processed", slog.Int("video_id", task.VideoID))
+		d.Ack(false)
 		return
 	}
 
@@ -51,6 +62,7 @@ func (vc *VideoConverter) HandleMessage(msg []byte) {
 	err := vc.processVideo(&task)
 	if err != nil {
 		vc.logError(task, "Error during video conversion", err)
+		d.Ack(false)
 		return
 	}
 	slog.Info("Video conversion processed", slog.Int("video_id", task.VideoID))
@@ -60,17 +72,27 @@ func (vc *VideoConverter) HandleMessage(msg []byte) {
 	if err != nil {
 		vc.logError(task, "Failed to mark video as processed", err)
 	}
+	d.Ack(false)
 	slog.Info("Video marked as processed", slog.Int("video_id", task.VideoID))
+
+	// Publicar a mensagem de confirmação
+	confirmationMessage := []byte(fmt.Sprintf(`{"video_id": %d, "path":"%s"}`, task.VideoID, task.Path))
+	err = vc.rabbitClient.PublishMessage(conversionExch, confirmationKey, confirmationQueue, confirmationMessage)
+	if err != nil {
+		slog.Error("Failed to publish confirmation message", slog.String("error", err.Error()))
+	}
+	slog.Info("Published confirmation message", slog.Int("video_id", task.VideoID))
 }
 
 // processVideo handles video processing (merging chunks and converting)
 func (vc *VideoConverter) processVideo(task *VideoTask) error {
-	mergedFile := filepath.Join(task.Path, "merged.mp4")
-	mpegDashPath := filepath.Join(task.Path, "mpeg-dash")
+	chunkPath := filepath.Join(vc.rootPath, fmt.Sprintf("%d", task.VideoID))
+	mergedFile := filepath.Join(chunkPath, "merged.mp4")
+	mpegDashPath := filepath.Join(chunkPath, "mpeg-dash")
 
 	// Merge chunks
-	slog.Info("Merging chunks", slog.String("path", task.Path))
-	if err := vc.mergeChunks(task.Path, mergedFile); err != nil {
+	slog.Info("Merging chunks", slog.String("path", chunkPath))
+	if err := vc.mergeChunks(chunkPath, mergedFile); err != nil {
 		return fmt.Errorf("failed to merge chunks: %v", err)
 	}
 
