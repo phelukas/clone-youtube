@@ -1,0 +1,26 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+amqp = "==5.2.0"
+asgiref = "==3.8.1"
+black = "==24.10.0"
+click = "==8.1.7"
+django = "==5.1.2"
+kombu = "==5.4.2"
+mypy-extensions = "==1.0.0"
+packaging = "==24.1"
+pathspec = "==0.12.1"
+pillow = "==11.0.0"
+platformdirs = "==4.3.6"
+psycopg2-binary = "==2.9.10"
+sqlparse = "==0.5.1"
+tzdata = "==2024.2"
+vine = "==5.1.0"
+
+[dev-packages]
+
+[requires]
+python_version = "3.12"
