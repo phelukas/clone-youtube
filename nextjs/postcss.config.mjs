@@ -1,8 +1,18 @@
-/** @type {import('postcss-load-config').Config} */
-const config = {
-  plugins: {
-    tailwindcss: {},
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+      after: true
   },
+  images: {
+      remotePatterns: [
+          {
+              hostname: 'localhost'
+          },
+          {
+              hostname: 'host.docker.internal'
+          }
+      ]
+  }
 };
 
-export default config;
+export default nextConfig;
